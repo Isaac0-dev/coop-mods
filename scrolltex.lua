@@ -1,4 +1,3 @@
-init_scroll_targets()
 add_scroll_target(1, "VB_bitdw_1_0xe0189c0", 0, 11)
 add_scroll_target(1, "VB_bitdw_1_0xe018a70", 0, 9)
 add_scroll_target(1, "VB_bitdw_1_0xe018b00", 0, 7)

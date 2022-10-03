@@ -60,9 +60,7 @@ gBehaviorValues.trajectories.KoopaBobTrajectory = get_trajectory('KoopaBoB_path'
 
 -- Stop Mario from sliding while the dialog box is open in "A Shocking Twist"
 function update()
-    local gDialogId = get_dialog_id()
-
-    if gDialogId == 99 and m.action == ACT_STOMACH_SLIDE then
+    if get_dialog_id() == DIALOG_099 and m.action == ACT_STOMACH_SLIDE then
         set_mario_action(m, ACT_READING_AUTOMATIC_DIALOG, 0)
     end
 end

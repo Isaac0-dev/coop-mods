@@ -44,3 +44,8 @@ end
 
 hook_event(HOOK_ON_SET_CAMERA_MODE, on_set_camera_mode)
 hook_event(HOOK_MARIO_UPDATE, override_camera)
+hook_event(HOOK_UPDATE, function()
+    if (gMarioStates[0].controller.buttonPressed & L_TRIG) ~= 0 then
+        center_rom_hack_camera()
+    end
+end)
