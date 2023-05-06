@@ -1,14 +1,10 @@
-function bhv_custom_big_bully_init(o)
-    o.oFlags = 9
-    o.oAnimations = gObjectAnimations.bully_seg5_anims_0500470C
-    o.oWallHitboxRadius = 100
-    cur_obj_update_floor_and_walls();
+local cur_obj_update_floor_and_walls, obj_lava_death, bhv_bully_loop = cur_obj_update_floor_and_walls, obj_lava_death, bhv_bully_loop
 
-    cur_obj_init_animation(0)
-    bhv_big_bully_init()
+function bhv_chilly_bully_init(o)
+    o.oWallHitboxRadius = 100
 end
 
-function bhv_custom_bully_loop(o)
+function bhv_chilly_bully_loop(o)
     cur_obj_update_floor_and_walls()
     if o.oAction == BULLY_ACT_LAVA_DEATH then
         o.oBullyPrevX = o.oPosX
@@ -24,6 +20,3 @@ function bhv_custom_bully_loop(o)
         bhv_bully_loop()
     end
 end
-
-bhvCustomBigChillBully = hook_behavior(id_bhvBigChillBully, OBJ_LIST_GENACTOR, true, bhv_custom_big_bully_init,
-    bhv_custom_bully_loop)

@@ -2,8 +2,6 @@
 -- description: This is a port of The Phantom's Call.\n\nThere are 30 stars to collect in 4 small courses.\n\nCreated by PhantomPhire\n\nPorted to coop by Isaac0-dev
 -- incompatible: romhack
 
-local m = gMarioStates[0]
-
 smlua_audio_utils_replace_sequence(0x01, 0x13, 100, "01_Seq_phantom_custom")
 smlua_audio_utils_replace_sequence(0x02, 0x25, 100, "02_Seq_phantom_custom")
 smlua_audio_utils_replace_sequence(0x03, 0x25, 100, "03_Seq_phantom_custom")
@@ -59,10 +57,11 @@ gLevelValues.coinsRequiredForCoinStar = 200
 gBehaviorValues.trajectories.KoopaBobTrajectory = get_trajectory('KoopaBoB_path')
 
 -- Stop Mario from sliding while the dialog box is open in "A Shocking Twist"
-function update()
-    if get_dialog_id() == DIALOG_099 and m.action == ACT_STOMACH_SLIDE then
-        set_mario_action(m, ACT_READING_AUTOMATIC_DIALOG, 0)
+local function fix_dialog_099(m, act)
+    if m.playerIndex ~= 0 then return end
+    if get_dialog_id() == DIALOG_099 and act ~= ACT_READING_AUTOMATIC_DIALOG and m.action ~= ACT_READING_AUTOMATIC_DIALOG then
+        return ACT_READING_AUTOMATIC_DIALOG
     end
 end
 
-hook_event(HOOK_UPDATE, update)
+hook_event(HOOK_BEFORE_SET_MARIO_ACTION, fix_dialog_099)
