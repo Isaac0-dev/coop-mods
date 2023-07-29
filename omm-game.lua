@@ -5,7 +5,7 @@ if _G.OmmEnabled then
         ---------------
 
         _G.OmmApi.omm_register_game_data(-1, 0, nil, true, false, 0xFFFF00, 250)
-        _G.OmmApi.omm_disable_non_stop_mode(true)
+        _G.OmmApi.omm_disable_feature("trueNonStop", true)
 
         -----------------
         -- Level stars --
