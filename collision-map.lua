@@ -153,19 +153,25 @@ end
 
 local y = 90
 
+local currArea  = 0
+local currLevel = 0
 local function reset_map()
-    sCollisionMap = {}
-    sSurfObjects = {}
-    sLoadingSurface = {}
+    if currLevel ~= np0.currLevelNum or currArea ~= np0.currAreaIndex then
+        currArea  = np0.currAreaIndex
+        currLevel = np0.currLevelNum
+        sCollisionMap = {}
+        sSurfObjects = {}
+        sLoadingSurface = {}
 
-    mapMiddleY = y + sHalfBounds
-    size = sBounds / 0x2000
-    range = sHalfBounds / size
-    sFrameTop = y
-    sFrameBottom = y + sBounds
+        mapMiddleY = y + sHalfBounds
+        size = sBounds / 0x2000
+        range = sHalfBounds / size
+        sFrameTop = y
+        sFrameBottom = y + sBounds
 
-    -- Update in case a romhack modifies these
-    RAY_CAST_DIR_HEIGHT = gLevelValues.floorLowerLimit - gLevelValues.cellHeightLimit
+        -- Update in case a romhack modifies these
+        RAY_CAST_DIR_HEIGHT = gLevelValues.floorLowerLimit - gLevelValues.cellHeightLimit
+    end
 end
 
 hook_event(HOOK_ON_WARP, reset_map)
