@@ -282,15 +282,17 @@ end
 local function speedrun_split(type)
     if sSpeedrunTimerPlaying then
         local splits = sSplits[sLocalPlayer + 1]
-        local split = splits[gPlayerSyncTable[0].speedrunSplit]
-        if split.levelID == np0.currLevelNum and split.type == type and sSpeedrunSplitFrames <= 0 then
-            sSpeedrunSplitFrames = speedrun_get_split_frames(type)
+        if splits then
+            local split = splits[gPlayerSyncTable[0].speedrunSplit]
+            if split and split.type == type and sSpeedrunSplitFrames <= 0 then
+                sSpeedrunSplitFrames = speedrun_get_split_frames(type)
+            end
         end
     end
 end
 
 -- Only to be executed by server
-local function speedrun_add_split(levelNum, levelName, type, playerNum)
+local function speedrun_add_split(levelNum, type, playerNum)
     playerNum = playerNum + 1
     if not sSplits[playerNum] then sSplits[playerNum] = {} end
     local key = tostring(playerNum) .. "P_split_" .. #sSplits[playerNum] + 1
@@ -321,6 +323,7 @@ local function speedrun_add_split(levelNum, levelName, type, playerNum)
         type = type,
         levelNum = levelNum,
         pbSegment = -1,
+        prevPbSegment = -1,
     })
 end
 local function speedrun_reset_timer()
@@ -436,8 +439,12 @@ local sPacketTable = {
             type = 0,
             levelNum = 0,
             pbSegment = 0,
+            prevPbSegment = 0,
             complete = false,
             compTime = 0,
+            noSplits = false,
+            finished = false,
+            playing = false,
         }
         for playerNum, player in ipairs(sSplits) do
             sendData.playerNum = playerNum
@@ -446,12 +453,23 @@ local sPacketTable = {
                 sendData.type = split.type
                 sendData.levelNum = split.levelID
                 sendData.pbSegment = split.pbSegment
+                sendData.prevPbSegment = split.prevPbSegment
                 if #sSplits == playerNum and #player == splitNum then
                     sendData.complete = true
                     sendData.compTime = sSpeedrunTimer
+                    sendData.finished = sSpeedrunTimerFinished
+                    sendData.playing = sSpeedrunTimerPlaying
                 end
                 network_send_to(localIndex, true, sendData)
             end
+        end
+        if #sSplits == 0 then
+            sendData.noSplits = true
+            sendData.complete = true
+            sendData.compTime = sSpeedrunTimer
+            sendData.finished = sSpeedrunTimerFinished
+            sendData.playing = sSpeedrunTimerPlaying
+            network_send_to(localIndex, true, sendData)
         end
     end,
     [PACKET_TYPE_SPLIT] = function (data)
@@ -466,8 +484,10 @@ local sPacketTable = {
             sSpeedrunTimerFinished = true
 
             local clientSplits = sSplits[sLocalPlayer + 1]
-            gPlayerSyncTable[0].speedrunSplit = #clientSplits
-            clientSplits[#clientSplits].thisSegment = data.segmentTime
+            if clientSplits then
+                gPlayerSyncTable[0].speedrunSplit = #clientSplits
+                clientSplits[#clientSplits].thisSegment = data.segmentTime
+            end
 
             -- Got a personal best?
             if splits[#splits].pbSegment == -1 or splits[#splits].pbSegment > sSpeedrunTimer then
@@ -483,17 +503,21 @@ local sPacketTable = {
         end
     end,
     [PACKET_TYPE_ADD_SPLIT] = function (data)
-        if not sSplits[data.playerNum] then sSplits[data.playerNum] = {} end
-        sSplits[data.playerNum][data.splitNum] = {
-            type = data.type,
-            levelID = data.levelNum,
-            levelName = get_abbreviated_level_name(data.levelNum),
-            pbSegment = data.pbSegment,
-            prevPbSegment = data.pbSegment,
-            thisSegment = -1,
-        }
+        if not data.noSplits then
+            if not sSplits[data.playerNum] then sSplits[data.playerNum] = {} end
+            sSplits[data.playerNum][data.splitNum] = {
+                type = data.type,
+                levelID = data.levelNum,
+                levelName = get_abbreviated_level_name(data.levelNum),
+                pbSegment = data.pbSegment,
+                prevPbSegment = data.prevPbSegment,
+                thisSegment = -1,
+            }
+        end
         if data.complete then
             sSpeedrunTimer = data.compTime
+            sSpeedrunTimerFinished = data.finished
+            sSpeedrunTimerPlaying = data.playing
             sNetworkLoaded = true
         end
     end,
@@ -780,15 +804,13 @@ local function frames_to_time_str(frames, forceMinutes)
     local seconds = s % 60
     local minutes = s // 60 % 60
     local hours = s // 60 // 60
-    local t = ""
     if minutes == 0 and not forceMinutes then
-        t = string_format("%d", seconds)
+        return string_format("%d", seconds)
     elseif hours == 0 then
-        t = string_format("%d:%02d", minutes, seconds)
+        return string_format("%d:%02d", minutes, seconds)
     else
-        t = string_format("%d:%02d:%02d", hours, minutes, seconds)
+        return string_format("%d:%02d:%02d", hours, minutes, seconds)
     end
-    return t
 end
 local function frames_to_time_str_decimal(frames, forceMinutes)
     local milliseconds = math_floor(frames / 30 % 1 * 100)
@@ -796,15 +818,13 @@ local function frames_to_time_str_decimal(frames, forceMinutes)
     local seconds = s % 60
     local minutes = s // 60 % 60
     local hours = s // 60 // 60
-    local t = ""
     if minutes == 0 and not forceMinutes then
-        t = string_format("%d.%02d", seconds, milliseconds)
+        return string_format("%d.%02d", seconds, milliseconds)
     elseif hours == 0 then
-        t = string_format("%d:%02d.%02d", minutes, seconds, milliseconds)
+        return string_format("%d:%02d.%02d", minutes, seconds, milliseconds)
     else
-        t = string_format("%d:%02d:%02d.%02d", hours, minutes, seconds, milliseconds)
+        return string_format("%d:%02d:%02d.%02d", hours, minutes, seconds, milliseconds)
     end
-    return t
 end
 
 local sMenuX = tonumber(mod_storage_load("menuX")) or 0
@@ -883,20 +903,24 @@ local function split_menu_run_render(x, y, w, h, segmentW)
             local fastestSplit = -1
             for _, player in ipairs(sSplits) do
                 local lastSplit = player[#player]
-                if lastSplit.pbSegment ~= -1 and (fastestSplit == -1 or fastestSplit > lastSplit.pbSegment) then
+                if (lastSplit.pbSegment == -1 and fastestSplit == -1) or (lastSplit.pbSegment ~= -1 and fastestSplit > lastSplit.pbSegment) then
                     fastestSplit = lastSplit.pbSegment
                 end
             end
-            isPbRun = fastestSplit > -1 and fastestSplit < sSpeedrunTimer
+            isPbRun = fastestSplit == sSpeedrunTimer
         end
-        if ((sSpeedrunTimerFinished and isPbRun) or
-            (sSpeedrunTimerPlaying and (split.prevPbSegment == -1 or split.prevPbSegment < sSpeedrunTimer))) then
+        if ((sSpeedrunTimerFinished and not isPbRun) or
+            (sSpeedrunTimerPlaying and split.prevPbSegment ~= -1 and split.prevPbSegment < sSpeedrunTimer)) then
             r, g, b = 0xFF, 0x00, 0x00
         elseif sSpeedrunTimerPlaying then
             r, g, b = 0x00, 0xFF, 0x00
-        elseif sSpeedrunTimerFinished then
+        elseif sSpeedrunTimerFinished and isPbRun then
             r, g, b = 0x00, 0x00, 0xFF
         end
+    elseif sSpeedrunTimerPlaying then
+        r, g, b = 0x00, 0xFF, 0x00
+    elseif sSpeedrunTimerFinished then
+        r, g, b = 0x00, 0x00, 0xFF
     end
 
     local scale = 0.5
@@ -950,7 +974,7 @@ local function split_menu_main_render(x, y, menuW, menuH, segmentW)
                 playing = sSpeedrunTimerPlaying,
                 finished = sSpeedrunTimerFinished,
             })
-        end)
+        end, "Timer State Toggle", sSpeedrunTimerFinished)
         render_button("Reset Timer", textS, x, y + (h * 1), w, h, function (getEnabled)
             if getEnabled then return false end
             speedrun_reset_timer()
@@ -1048,7 +1072,7 @@ local function split_menu_add_split_render(x, y, w, h)
                 prevPbSegment = -1,
                 thisSegment = -1,
             })
-        end, "Clear Times", true)
+        end, "Clear Times", sSplitEdit.prevPbSegment == -1)
         render_button("Delete", textS, halfW, y + 65, 20, 10, function (getEnabled)
             if getEnabled then return false end
             local playerNum = sSplitAddPlayer + 1
@@ -1109,7 +1133,7 @@ local function split_menu_add_split_render(x, y, w, h)
                 thisSegment = sSplitEdit.thisSegment,
             })
         else
-            speedrun_add_split(levelNum, levelName, sSplitAddType, sSplitAddPlayer)
+            speedrun_add_split(levelNum, sSplitAddType, sSplitAddPlayer)
         end
     end)
 end
