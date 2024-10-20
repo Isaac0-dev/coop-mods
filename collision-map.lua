@@ -156,12 +156,12 @@ local y = 90
 local currArea  = 0
 local currLevel = 0
 local function reset_map()
+    sSurfObjects = {}
+    sLoadingSurface = {}
     if currLevel ~= np0.currLevelNum or currArea ~= np0.currAreaIndex then
         currArea  = np0.currAreaIndex
         currLevel = np0.currLevelNum
         sCollisionMap = {}
-        sSurfObjects = {}
-        sLoadingSurface = {}
 
         mapMiddleY = y + sHalfBounds
         size = sBounds / 0x2000
