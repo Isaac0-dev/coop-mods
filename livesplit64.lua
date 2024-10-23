@@ -30,10 +30,30 @@ local function storage_load(key)
     end
 end
 
+local sMenuX = tonumber(mod_storage_load("menuX")) or 0
+local sMenuY = tonumber(mod_storage_load("menuY")) or 0
+
 local function throw_error(str)
-    str = "LiveSplit64: " .. str
-    log_to_console(str)
-    print(str)
+    local errStr = "LiveSplit64: " .. str
+    log_to_console(errStr)
+    print(errStr)
+
+    hook_event(HOOK_ON_HUD_RENDER, function ()
+        djui_hud_set_font(FONT_NORMAL)
+        djui_hud_set_resolution(RESOLUTION_N64)
+        djui_hud_set_rotation(0, 0, 0)
+
+        local x = sMenuX
+        local w = 50
+        local h = 95
+
+        djui_hud_set_color(0x00, 0x00, 0x00, 0x9F)
+        djui_hud_render_rect(x, sMenuY, w + 1, h + 10)
+
+        local text = "Error, see console"
+        local len = djui_hud_measure_text(text) * 0.2
+        djui_hud_print_text(text, x + ((w - len) / 2), sMenuY + (h / 2), 0.2)
+    end)
 end
 
 local error = false
@@ -120,10 +140,11 @@ end
 
 local sSplits = {}
 
-local SPLIT_STAR       = 0
-local SPLIT_PAUSE_EXIT = 1
-local SPLIT_STAR_EXIT  = 2
-local SPLIT_BOWSER     = 3
+local SPLIT_PAUSE_EXIT = 0
+local SPLIT_BOWSER     = 1
+local SPLIT_STAR       = 2
+local SPLIT_STAR_EXIT  = 3
+local SPLIT_COUNT      = SPLIT_STAR_EXIT
 
 local SPLIT_MENU_RUN       = -1
 local SPLIT_MENU_MAIN      = 0
@@ -279,12 +300,23 @@ local function speedrun_get_split_frames(type)
     if type == SPLIT_BOWSER     then return 1 end
 end
 
+local function split_same_level(split)
+    local localLevel = np0.currLevelNum
+    if split.type == SPLIT_BOWSER and (localLevel == LEVEL_BOWSER_1 or localLevel == LEVEL_BOWSER_2 or localLevel == LEVEL_BOWSER_3) then
+        return true
+    end
+    if split.type == SPLIT_PAUSE_EXIT and split.levelID == LEVEL_HMC and localLevel == LEVEL_COTMC then
+        return true
+    end
+    return split.levelID == np0.currLevelNum
+end
+
 local function speedrun_split(type)
     if sSpeedrunTimerPlaying then
         local splits = sSplits[sLocalPlayer + 1]
         if splits then
             local split = splits[gPlayerSyncTable[0].speedrunSplit]
-            if split and split.type == type and sSpeedrunSplitFrames <= 0 then
+            if split and split_same_level(split) and split.type == type and sSpeedrunSplitFrames <= 0 then
                 sSpeedrunSplitFrames = speedrun_get_split_frames(type)
             end
         end
@@ -293,7 +325,6 @@ end
 
 -- Only to be executed by server
 local function speedrun_add_split(levelNum, type, playerNum)
-    playerNum = playerNum + 1
     if not sSplits[playerNum] then sSplits[playerNum] = {} end
     local key = tostring(playerNum) .. "P_split_" .. #sSplits[playerNum] + 1
     local value = tostring(type) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
@@ -406,6 +437,7 @@ hook_event(HOOK_UPDATE, function ()
                 if splits[#splits].pbSegment == -1 or splits[#splits].pbSegment > sSpeedrunTimer then
                     for _, player in ipairs(sSplits) do
                         for _, s in ipairs(player) do
+                            s.prevPbSegment = s.pbSegment
                             s.pbSegment = s.thisSegment
                             if network_is_server() then storage_save(s.key, s.orig:match("^(.*)_") .. "_" .. tostring(s.thisSegment)) end
                         end
@@ -493,6 +525,7 @@ local sPacketTable = {
             if splits[#splits].pbSegment == -1 or splits[#splits].pbSegment > sSpeedrunTimer then
                 for _, player in ipairs(sSplits) do
                     for _, s in ipairs(player) do
+                        s.prevPbSegment = s.pbSegment
                         s.pbSegment = s.thisSegment
                         if network_is_server() then storage_save(s.key, s.orig:match("^(.*)_") .. "_" .. tostring(s.thisSegment)) end
                     end
@@ -531,7 +564,7 @@ local sPacketTable = {
         for _, player in ipairs(sSplits) do
             for _, s in ipairs(player) do
                 s.thisSegment = -1
-                s.prevPbSegment = s.prevPbSegment
+                s.prevPbSegment = s.pbSegment
             end
         end
     end,
@@ -830,8 +863,8 @@ end
 local sMenuX = tonumber(mod_storage_load("menuX")) or 0
 local sMenuY = tonumber(mod_storage_load("menuY")) or 0
 local sCourseID = COURSE_BOB
-local sSplitAddType = 0
-local sSplitAddPlayer = 0
+local sSplitAddType = SPLIT_PAUSE_EXIT
+local sSplitAddPlayer = 1
 
 local function split_menu_run_render(x, y, w, h, segmentW)
     djui_hud_set_color(0x00, 0x00, 0x00, 0xCF)
@@ -900,14 +933,16 @@ local function split_menu_run_render(x, y, w, h, segmentW)
         local split = splits[gPlayerSyncTable[0].speedrunSplit] or splits[gPlayerSyncTable[network_local_index_from_global(0)].speedrunSplit]
         local isPbRun = false
         if sSpeedrunTimerFinished then
-            local fastestSplit = -1
+            local fastestSplit = nil
             for _, player in ipairs(sSplits) do
                 local lastSplit = player[#player]
-                if (lastSplit.pbSegment == -1 and fastestSplit == -1) or (lastSplit.pbSegment ~= -1 and fastestSplit > lastSplit.pbSegment) then
-                    fastestSplit = lastSplit.pbSegment
+                if lastSplit.prevPbSegment ~= -1 then
+                    if fastestSplit == nil or lastSplit.prevPbSegment < fastestSplit then
+                        fastestSplit = lastSplit.prevPbSegment
+                    end
                 end
             end
-            isPbRun = fastestSplit == sSpeedrunTimer
+            isPbRun = fastestSplit == nil or fastestSplit > sSpeedrunTimer
         end
         if ((sSpeedrunTimerFinished and not isPbRun) or
             (sSpeedrunTimerPlaying and split.prevPbSegment ~= -1 and split.prevPbSegment < sSpeedrunTimer)) then
@@ -937,10 +972,14 @@ local function split_menu_run_render(x, y, w, h, segmentW)
         local np = gNetworkPlayers[network_local_index_from_global(playerIndex)]
         local connected = np.connected
         local str = connected and get_uncolored_string(np.name) or "-"
-        local txtX = x + (segmentW * playerIndex) + 2
+        local segX = x + (segmentW * playerIndex)
+        local txtX = segX + 2
+        local m = djui_hud_measure_text(str) * 0.3
         if #sSplits == 2 and playerIndex == 1 then
-            local m = djui_hud_measure_text(str) * 0.3
             txtX = x + (w - m) - 2
+        end
+        if m > segmentW then
+            str = str:sub(1, math_floor(((#str + 2 * 16) - (m - segmentW)) * 0.3)) .. ".."
         end
         djui_hud_print_text(str, txtX, sMenuY, 0.3)
     end
@@ -1051,7 +1090,7 @@ local function split_menu_add_split_render(x, y, w, h)
     if sSplitAddType == SPLIT_BOWSER     then splitName = "Bowser"     end
     render_button(splitName, textS, halfW - 15, y + 55, 30, 10, function (getEnabled)
         if getEnabled then return false end
-        sSplitAddType = (sSplitAddType + 1) % (SPLIT_BOWSER + 1)
+        sSplitAddType = (sSplitAddType + 1) % (SPLIT_COUNT + 1)
     end)
 
     if isEditing then
@@ -1075,7 +1114,7 @@ local function split_menu_add_split_render(x, y, w, h)
         end, "Clear Times", sSplitEdit.prevPbSegment == -1)
         render_button("Delete", textS, halfW, y + 65, 20, 10, function (getEnabled)
             if getEnabled then return false end
-            local playerNum = sSplitAddPlayer + 1
+            local playerNum = sSplitAddPlayer
             table.remove(sSplits[playerNum], sSplitEditSegmentNum)
             if #sSplits[playerNum] == 0 then table.remove(sSplits, playerNum) end
             local key = tostring(playerNum) .. "P_split_" .. tostring(sSplitEditSegmentNum)
@@ -1089,15 +1128,15 @@ local function split_menu_add_split_render(x, y, w, h)
             sSplitMenu = SPLIT_MENU_EDIT
         end)
     else
-        local np = gNetworkPlayers[sSplitAddPlayer]
+        local np = gNetworkPlayers[sSplitAddPlayer - 1]
         local connected = np.connected
-        local pName = tostring(sSplitAddPlayer) .. " - " .. (connected and get_uncolored_string(np.name) or "Not connected")
+        local pName = tostring(sSplitAddPlayer - 1) .. " - " .. (connected and get_uncolored_string(np.name) or "Not connected")
         local pLen = djui_hud_measure_text(pName) * s
         local pX = halfW - (pLen / 2)
         djui_hud_print_text(pName, pX, y + 67, s)
         render_button("<", textS, halfW - 15, y + 75, 10, 10, function (getEnabled)
             if getEnabled then return false end
-            sSplitAddPlayer = math_max(0, sSplitAddPlayer - 1)
+            sSplitAddPlayer = math_max(1, sSplitAddPlayer - 1)
         end, "<2")
         render_button(">", textS, halfW + 5, y + 75, 10, 10, function (getEnabled)
             if getEnabled then return false end
@@ -1117,7 +1156,7 @@ local function split_menu_add_split_render(x, y, w, h)
             sSplitEdit.levelID = levelNum
             sSplitEdit.levelName = get_abbreviated_level_name(levelNum)
 
-            local playerNum = sSplitAddPlayer + 1
+            local playerNum = sSplitAddPlayer
             local key = tostring(playerNum) .. "P_split_" .. tostring(sSplitEditSegmentNum)
             local value = tostring(sSplitAddType) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
             storage_save(key, value)
@@ -1142,8 +1181,8 @@ local function split_menu_edit_render(x, y, w, h, segmentW)
     djui_hud_set_color(0x00, 0x00, 0x00, 0xCF)
 
     local mouseClickBox = false
-    local inBoxPI = 0
-    local inBoxSN = 0
+    local inBoxPI = 0 -- playerIndex
+    local inBoxSN = 0 -- segmentNumber
     for playerIndex, player in ipairs(sSplits) do
         for segmentNum, segment in ipairs(player) do
             local drawS = 7
@@ -1156,24 +1195,23 @@ local function split_menu_edit_render(x, y, w, h, segmentW)
                 inBoxPI = playerIndex
                 inBoxSN = segmentNum
             else
+                local levelStr = segment.levelName
                 if isInBox then
                     djui_hud_set_color(0x00, 0x00, 0xFF, 0xFF)
+                    if sMouse.prevClickedElement == levelStr then
+                        sSplitMenu = SPLIT_MENU_ADD_SPLIT
+                        sSplitEdit = segment
+                        sCourseID = level_to_course(segment.levelID)
+                        sSplitAddType = segment.type
+                        sSplitAddPlayer = playerIndex
+                        sSplitEditSegmentNum = segmentNum
+                    end
                 elseif segmentNum % 2 == 1 then
                     djui_hud_set_color(0x00, 0x00, 0x00, 0xBF)
                 else
                     djui_hud_set_color(0x30, 0x30, 0x30, 0xBF)
                 end
                 djui_hud_render_rect(x, y, segmentW, drawS)
-                local levelStr = segment.levelName
-
-                if sMouse.prevClickedElement == levelStr then
-                    sSplitMenu = SPLIT_MENU_ADD_SPLIT
-                    sSplitEdit = segment
-                    sCourseID = level_to_course(segment.levelID)
-                    sSplitAddType = segment.type
-                    sSplitAddPlayer = playerIndex - 1
-                    sSplitEditSegmentNum = segmentNum
-                end
 
                 local time = segment.pbSegment == -1 and "-" or frames_to_time_str(segment.pbSegment, true)
                 local m = djui_hud_measure_text(time) * 0.2
@@ -1223,8 +1261,8 @@ local function split_menu_edit_render(x, y, w, h, segmentW)
         sSplitMenu = SPLIT_MENU_ADD_SPLIT
         sSplitEdit = nil
         sCourseID = COURSE_BOB
-        sSplitAddType = SPLIT_STAR
-        sSplitAddPlayer = 0
+        sSplitAddType = SPLIT_PAUSE_EXIT
+        sSplitAddPlayer = 1
     end)
     render_button("Back", 0.2, x, y + h - 16, w / 2, 15, function (getEnabled)
         if getEnabled then return false end
@@ -1233,8 +1271,6 @@ local function split_menu_edit_render(x, y, w, h, segmentW)
 end
 
 hook_event(HOOK_ON_HUD_RENDER, function ()
-    if not sNetworkLoaded then return end
-
     if not sMouse.click then
         sMouse.prevClickedElement = sMouse.clickedElement
         sMouse.clickedElement = nil
@@ -1284,7 +1320,7 @@ hook_event(HOOK_ON_HUD_RENDER, function ()
     djui_hud_set_color(0x00, 0x00, 0x00, 0x9F)
     djui_hud_render_rect(x, sMenuY, w + 1, h + 10)
 
-    if sSplitMenu ~= SPLIT_MENU_RUN then
+    if sSplitMenu ~= SPLIT_MENU_RUN or not sNetworkLoaded then
         local text = "LiveSplit64"
         local len = djui_hud_measure_text(text) * 0.3
         djui_hud_print_text(text, x + ((w - len) / 2), sMenuY, 0.3, 1)
@@ -1292,6 +1328,12 @@ hook_event(HOOK_ON_HUD_RENDER, function ()
         if is_point_in_box(sMouse.cx, sMouse.cy, x, y, w, h) then
             sMouse.hoverElement = "menu"
         end
+    end
+    if not sNetworkLoaded then
+        local text = "Loading splits from host..."
+        local len = djui_hud_measure_text(text) * 0.2
+        djui_hud_print_text(text, x + ((w - len) / 2), sMenuY + (h / 2), 0.2, 1)
+        return
     end
 
     -- Render the menus
