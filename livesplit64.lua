@@ -56,8 +56,15 @@ local function throw_error(str)
     end)
 end
 
+local sCountdownLength = 0
 local error = false
 if network_is_server() then
+    sCountdownLength = tonumber(mod_storage_load("countdown")) or 0
+    if sCountdownLength == 0 then
+        mod_storage_save("countdown", "0")
+    end
+    sCountdownLength = sCountdownLength * 30
+
     local function load_variable(name, isNumber, table, saveStr)
         if error then return end
         local var = storage_load(name)
@@ -67,10 +74,7 @@ if network_is_server() then
         table[saveStr] = isNumber and tonumber(var) or var
     end
 
-    -- These are variables that are required for the mod to run
-    load_variable("settings",        false)
     load_variable("numberOfPlayers", true)
-
     if sLiveSplitSettings.numberOfPlayers then
         for num = 1, sLiveSplitSettings.numberOfPlayers do
             sLiveSplitSettings[num] = {}
@@ -139,6 +143,7 @@ local function level_to_course(level)
 end
 
 local sSplits = {}
+local sSplitsMap = {} -- For translating in memory splits to saved splits
 
 local SPLIT_PAUSE_EXIT = 0
 local SPLIT_BOWSER     = 1
@@ -221,22 +226,34 @@ for i = 0, MAX_PLAYERS - 1 do
     syncTable.speedrunSplit = 1
 end
 
+local function translate_split(player, split)
+    if sSplitsMap[player] then
+        return sSplitsMap[player][split]
+    end
+    return split
+end
+
+local function get_split_key(player, split)
+    return tostring(player) .. "P_split_" .. tostring(split)
+end
+
 -- Load splits
 if network_is_server() then
     for player = 1, sLiveSplitSettings.numberOfPlayers do
-        local playerStr = tostring(player) .. "P_split_"
         sSplits[player] = {}
+        sSplitsMap[player] = {}
         local split = 1
         local i = 1
         local numSplits = sLiveSplitSettings[player].numberOfSplits
         while i <= numSplits do
-            local splitStr = playerStr .. tostring(i)
+            local splitStr = get_split_key(player, i)
             local str = storage_load(splitStr)
             if not str then throw_error("Expected to find key '" .. splitStr .. "', but it was undefined.") return end
             if str ~= "cleared" then
                 sSplits[player][split] = parse_split(splitStr, str, str:split("_"))
                 split = split + 1
             end
+            sSplitsMap[player][split] = i
             i = i + 1
         end
     end
@@ -250,6 +267,7 @@ local sSpeedrunTimer = 0
 local sSpeedrunTimerPlaying = false
 local sSpeedrunTimerFinished = false
 local sSpeedrunSplitFrames = 0
+local sCountdown = sCountdownLength
 
 -- Warp Node constants
 local WARP_NODE_F0 = 0xF0
@@ -300,9 +318,12 @@ local function speedrun_get_split_frames(type)
     if type == SPLIT_BOWSER     then return 1 end
 end
 
+local sBowserLevels = { [LEVEL_BITDW] = 1, [LEVEL_BITFS] = 1, [LEVEL_BITS] = 1 }
+local sBowserArenas = { [LEVEL_BOWSER_1] = 1, [LEVEL_BOWSER_2] = 1, [LEVEL_BOWSER_3] = 1 }
+
 local function split_same_level(split)
     local localLevel = np0.currLevelNum
-    if split.type == SPLIT_BOWSER and (localLevel == LEVEL_BOWSER_1 or localLevel == LEVEL_BOWSER_2 or localLevel == LEVEL_BOWSER_3) then
+    if (sBowserLevels[split.levelID] or split.type == SPLIT_BOWSER) and sBowserArenas[localLevel] then
         return true
     end
     if split.type == SPLIT_PAUSE_EXIT and split.levelID == LEVEL_HMC and localLevel == LEVEL_COTMC then
@@ -326,7 +347,7 @@ end
 -- Only to be executed by server
 local function speedrun_add_split(levelNum, type, playerNum)
     if not sSplits[playerNum] then sSplits[playerNum] = {} end
-    local key = tostring(playerNum) .. "P_split_" .. #sSplits[playerNum] + 1
+    local key = get_split_key(translate_split(playerNum), #sSplits[playerNum] + 1)
     local value = tostring(type) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
     sSplits[playerNum][#sSplits[playerNum] + 1] = {
         key = key,
@@ -359,13 +380,18 @@ local function speedrun_add_split(levelNum, type, playerNum)
 end
 local function speedrun_reset_timer()
     if not network_is_server() then return end
+    sCountdown = sCountdownLength
+    sSpeedrunTimer = sCountdownLength
+
+    -- Tell the network to reset
     network_send(true, {
         packetType = PACKET_TYPE_RESET_TIMER,
+        timer = sSpeedrunTimer,
     })
+
     sSplitMenu = SPLIT_MENU_RUN
     sSpeedrunTimerFinished = false
     sSpeedrunTimerPlaying = false
-    sSpeedrunTimer = 0
     gPlayerSyncTable[0].speedrunSplit = 1
     sSpeedrunSplitFrames = 0
     for _, player in ipairs(sSplits) do
@@ -382,6 +408,10 @@ local function mh_is_runner_timer()
     local timer = mhApi.getGlobalField("mhTimer")
     local countdown = mhApi.getGlobalField("countdown")
     return timer > countdown
+end
+
+local function is_countdown()
+    return mh_is_runner_timer() or (sCountdown > 0)
 end
 
 hook_event(HOOK_UPDATE, function ()
@@ -409,8 +439,15 @@ hook_event(HOOK_UPDATE, function ()
             end
         end
     end
+
+    -- Countdown
+    if sCountdown > 0 then
+        if sSpeedrunTimerPlaying then sCountdown = sCountdown - 1 end
+        sSpeedrunTimer = sCountdown
+    end
+
     if sSpeedrunTimerPlaying then
-        if not mhApi then sSpeedrunTimer = sSpeedrunTimer + 1 end
+        if not mhApi or sCountdown > 0 then sSpeedrunTimer = sSpeedrunTimer + 1 end -- Timer is manually updated by mh
 
         if sSpeedrunSplitFrames == 1 then
             local curSplit = gPlayerSyncTable[0].speedrunSplit
@@ -477,6 +514,7 @@ local sPacketTable = {
             noSplits = false,
             finished = false,
             playing = false,
+            countdown = 0,
         }
         for playerNum, player in ipairs(sSplits) do
             sendData.playerNum = playerNum
@@ -488,6 +526,7 @@ local sPacketTable = {
                 sendData.prevPbSegment = split.prevPbSegment
                 if #sSplits == playerNum and #player == splitNum then
                     sendData.complete = true
+                    sendData.countdown = sCountdown
                     sendData.compTime = sSpeedrunTimer
                     sendData.finished = sSpeedrunTimerFinished
                     sendData.playing = sSpeedrunTimerPlaying
@@ -548,17 +587,19 @@ local sPacketTable = {
             }
         end
         if data.complete then
+            sCountdown = data.countdown
             sSpeedrunTimer = data.compTime
             sSpeedrunTimerFinished = data.finished
             sSpeedrunTimerPlaying = data.playing
             sNetworkLoaded = true
         end
     end,
-    [PACKET_TYPE_RESET_TIMER] = function ()
+    [PACKET_TYPE_RESET_TIMER] = function (data)
         sSplitMenu = SPLIT_MENU_RUN
         sSpeedrunTimerFinished = false
         sSpeedrunTimerPlaying = false
-        sSpeedrunTimer = 0
+        sSpeedrunTimer = data.timer
+        sCountdown = data.timer
         gPlayerSyncTable[0].speedrunSplit = 1
         sSpeedrunSplitFrames = 0
         for _, player in ipairs(sSplits) do
@@ -593,7 +634,9 @@ hook_event(HOOK_ON_PACKET_RECEIVE, function (data) if sPacketTable[data.packetTy
 
 local function get_last_warp_node_id() return m0.area.warpNodes.node.id end
 
--- Level Exit
+------------
+-- Splits --
+------------
 
 local sWarpEntryArea = 0
 local sWarpEntryLevel = 0
@@ -649,10 +692,7 @@ hook_event(HOOK_ON_INTERACT, function (m, o, intType, intVal)
     if m.playerIndex ~= 0 then return end
     if intVal then
         if intType == INTERACT_STAR_OR_KEY then
-            local level = np0.currLevelNum
-            if (level == LEVEL_BOWSER_1 or
-                level == LEVEL_BOWSER_2 or
-                level == LEVEL_BOWSER_3) then
+            if (sBowserArenas[np0.currLevelNum]) then
                 speedrun_split(SPLIT_BOWSER)
             else
                 speedrun_split(SPLIT_STAR)
@@ -667,7 +707,10 @@ hook_event(HOOK_ON_INTERACT, function (m, o, intType, intVal)
     end
 end)
 
--- Render
+
+------------
+-- Inputs --
+------------
 
 local sMouse = {
     click = false,
@@ -732,6 +775,10 @@ hook_event(HOOK_BEFORE_MARIO_UPDATE, function (m)
         update_inputs()
     end
 end)
+
+------------
+-- Render --
+------------
 
 local sLiveSplit64Chars = {
     ["."] = 10,
@@ -860,8 +907,6 @@ local function frames_to_time_str_decimal(frames, forceMinutes)
     end
 end
 
-local sMenuX = tonumber(mod_storage_load("menuX")) or 0
-local sMenuY = tonumber(mod_storage_load("menuY")) or 0
 local sCourseID = COURSE_BOB
 local sSplitAddType = SPLIT_PAUSE_EXIT
 local sSplitAddPlayer = 1
@@ -928,34 +973,36 @@ local function split_menu_run_render(x, y, w, h, segmentW)
 
     -- Timer
     local r, g, b = 0xFF, 0xFF, 0xFF
-    if #sSplits > 0 then
-        local splits = sSplits[sLocalPlayer + 1] or sSplits[1]
-        local split = splits[gPlayerSyncTable[0].speedrunSplit] or splits[gPlayerSyncTable[network_local_index_from_global(0)].speedrunSplit]
-        local isPbRun = false
-        if sSpeedrunTimerFinished then
-            local fastestSplit = nil
-            for _, player in ipairs(sSplits) do
-                local lastSplit = player[#player]
-                if lastSplit.prevPbSegment ~= -1 then
-                    if fastestSplit == nil or lastSplit.prevPbSegment < fastestSplit then
-                        fastestSplit = lastSplit.prevPbSegment
+    if not is_countdown() then
+        if #sSplits > 0 then
+            local splits = sSplits[sLocalPlayer + 1] or sSplits[1]
+            local split = splits[gPlayerSyncTable[0].speedrunSplit] or splits[gPlayerSyncTable[network_local_index_from_global(0)].speedrunSplit]
+            local isPbRun = false
+            if sSpeedrunTimerFinished then
+                local fastestSplit = nil
+                for _, player in ipairs(sSplits) do
+                    local lastSplit = player[#player]
+                    if lastSplit.prevPbSegment ~= -1 then
+                        if fastestSplit == nil or lastSplit.prevPbSegment < fastestSplit then
+                            fastestSplit = lastSplit.prevPbSegment
+                        end
                     end
                 end
+                isPbRun = fastestSplit == nil or fastestSplit > sSpeedrunTimer
             end
-            isPbRun = fastestSplit == nil or fastestSplit > sSpeedrunTimer
-        end
-        if ((sSpeedrunTimerFinished and not isPbRun) or
-            (sSpeedrunTimerPlaying and split.prevPbSegment ~= -1 and split.prevPbSegment < sSpeedrunTimer)) then
-            r, g, b = 0xFF, 0x00, 0x00
+            if ((sSpeedrunTimerFinished and not isPbRun) or
+                (sSpeedrunTimerPlaying and split.prevPbSegment ~= -1 and split.prevPbSegment < sSpeedrunTimer)) then
+                r, g, b = 0xFF, 0x00, 0x00
+            elseif sSpeedrunTimerPlaying then
+                r, g, b = 0x00, 0xFF, 0x00
+            elseif sSpeedrunTimerFinished and isPbRun then
+                r, g, b = 0x00, 0x00, 0xFF
+            end
         elseif sSpeedrunTimerPlaying then
             r, g, b = 0x00, 0xFF, 0x00
-        elseif sSpeedrunTimerFinished and isPbRun then
+        elseif sSpeedrunTimerFinished then
             r, g, b = 0x00, 0x00, 0xFF
         end
-    elseif sSpeedrunTimerPlaying then
-        r, g, b = 0x00, 0xFF, 0x00
-    elseif sSpeedrunTimerFinished then
-        r, g, b = 0x00, 0x00, 0xFF
     end
 
     local scale = 0.5
@@ -988,7 +1035,7 @@ local function split_menu_run_render(x, y, w, h, segmentW)
     local tLen = livesplit64_measure(t, scale)
     local txtX = x + w - 2
     if #sSplits == 2 then txtX = x + ((w / 2) + ((tLen + milliTextLen) / 2)) end
-    if mh_is_runner_timer() then djui_hud_print_text("-", txtX - (tLen + milliTextLen) - (16 * scale), timerY, scale, 1, r, g, b) end
+    if is_countdown() then djui_hud_print_text("-", txtX - (tLen + milliTextLen) - (16 * scale), timerY, scale, 1, r, g, b) end
     livesplit64_print_text(t, txtX - (tLen + milliTextLen), timerY, scale, 1, r, g, b)
     local milliY = timerY + (32 * 0.5 * scale) - 5
     livesplit64_print_text(milliText, txtX - milliTextLen, milliY, milliSize, 1, r, g, b)
@@ -1117,7 +1164,7 @@ local function split_menu_add_split_render(x, y, w, h)
             local playerNum = sSplitAddPlayer
             table.remove(sSplits[playerNum], sSplitEditSegmentNum)
             if #sSplits[playerNum] == 0 then table.remove(sSplits, playerNum) end
-            local key = tostring(playerNum) .. "P_split_" .. tostring(sSplitEditSegmentNum)
+            local key = get_split_key(translate_split(playerNum), sSplitEditSegmentNum)
             storage_save(key, "cleared")
             network_send(true, {
                 packetType = PACKET_TYPE_EDIT_SPLIT,
@@ -1129,8 +1176,7 @@ local function split_menu_add_split_render(x, y, w, h)
         end)
     else
         local np = gNetworkPlayers[sSplitAddPlayer - 1]
-        local connected = np.connected
-        local pName = tostring(sSplitAddPlayer - 1) .. " - " .. (connected and get_uncolored_string(np.name) or "Not connected")
+        local pName = tostring(sSplitAddPlayer - 1) .. " - " .. (np.connected and get_uncolored_string(np.name) or "Not connected")
         local pLen = djui_hud_measure_text(pName) * s
         local pX = halfW - (pLen / 2)
         djui_hud_print_text(pName, pX, y + 67, s)
@@ -1157,7 +1203,7 @@ local function split_menu_add_split_render(x, y, w, h)
             sSplitEdit.levelName = get_abbreviated_level_name(levelNum)
 
             local playerNum = sSplitAddPlayer
-            local key = tostring(playerNum) .. "P_split_" .. tostring(sSplitEditSegmentNum)
+            local key = get_split_key(translate_split(playerNum), sSplitEditSegmentNum)
             local value = tostring(sSplitAddType) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
             storage_save(key, value)
 
@@ -1298,13 +1344,11 @@ hook_event(HOOK_ON_HUD_RENDER, function ()
     sMouse.cy = sMouse.y * diffY
 
     local x = sMenuX
-    local y = sMenuY
+    local y = sMenuY + 10
     local segmentW = 40
-    local w = segmentW
+    local w = math_max(#sSplits, 1) * segmentW
     local h = 100
 
-    y = y + 10
-    w = math_max(#sSplits, 1) * segmentW
     local largest = 1
     for _, s in ipairs(sSplits) do
         if #s > largest then
