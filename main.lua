@@ -200,7 +200,6 @@ bhvPipeSpawner = hook_behavior(nil, OBJ_LIST_LEVEL, true, bhv_warp_pipe_spawner,
 -- awful way to do this, don't copy off me
 local function on_hud_render()
     local np = gNetworkPlayers[m.playerIndex]
-    djui_hud_set_render_behind_hud(true)
     djui_hud_set_font(FONT_HUD)
     djui_hud_set_resolution(RESOLUTION_N64)
 
@@ -267,7 +266,7 @@ local function on_hud_render()
     end
 end
 
-hook_event(HOOK_ON_HUD_RENDER, on_hud_render)
+hook_event(HOOK_ON_HUD_RENDER_BEHIND, on_hud_render)
 hook_event(HOOK_MARIO_UPDATE, mario_update)
 hook_event(HOOK_ON_INTERACT, on_object_interact)
 hook_event(HOOK_ON_CHANGE_CAMERA_ANGLE, function(mode)if mode == CAM_ANGLE_MARIO then return false end end)
