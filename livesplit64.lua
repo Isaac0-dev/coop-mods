@@ -30,6 +30,11 @@ local function storage_load(key)
     end
 end
 
+local function debug_log(...)
+    print(...)
+    log_to_console(...)
+end
+
 local sMenuX = tonumber(mod_storage_load("menuX")) or 0
 local sMenuY = tonumber(mod_storage_load("menuY")) or 0
 
@@ -226,11 +231,24 @@ for i = 0, MAX_PLAYERS - 1 do
     syncTable.speedrunSplit = 1
 end
 
+-- Translates a split index as it appears on the screen,
+-- to the order that splits have in the save file
 local function translate_split(player, split)
-    if sSplitsMap[player] then
-        return sSplitsMap[player][split]
+    for k, v in pairs(sSplitsMap[player]) do
+        if v == split then
+            return k
+        end
     end
-    return split
+    return nil -- error!
+end
+
+local function split_map_get_top(player)
+    local highest = -1
+    for _, value in pairs(sSplitsMap[player]) do
+        if value > highest then highest = value end
+    end
+    if highest ~= -1 then return highest end
+    return 0
 end
 
 local function get_split_key(player, split)
@@ -242,18 +260,17 @@ if network_is_server() then
     for player = 1, sLiveSplitSettings.numberOfPlayers do
         sSplits[player] = {}
         sSplitsMap[player] = {}
-        local split = 1
-        local i = 1
+        local split, i = 1, 1
         local numSplits = sLiveSplitSettings[player].numberOfSplits
         while i <= numSplits do
             local splitStr = get_split_key(player, i)
             local str = storage_load(splitStr)
             if not str then throw_error("Expected to find key '" .. splitStr .. "', but it was undefined.") return end
+            sSplitsMap[player][i] = str ~= "cleared" and split or -1
             if str ~= "cleared" then
                 sSplits[player][split] = parse_split(splitStr, str, str:split("_"))
                 split = split + 1
             end
-            sSplitsMap[player][split] = i
             i = i + 1
         end
     end
@@ -347,9 +364,13 @@ end
 -- Only to be executed by server
 local function speedrun_add_split(levelNum, type, playerNum)
     if not sSplits[playerNum] then sSplits[playerNum] = {} end
-    local key = get_split_key(translate_split(playerNum), #sSplits[playerNum] + 1)
+    if not sSplitsMap[playerNum] then sSplitsMap[playerNum] = {} end
+    local newMapCount = #sSplitsMap[playerNum] + 1
+    local newCount = #sSplits[playerNum] + 1
+    sSplitsMap[playerNum][newMapCount] = split_map_get_top(playerNum) + 1
+    local key = get_split_key(playerNum, newMapCount)
     local value = tostring(type) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
-    sSplits[playerNum][#sSplits[playerNum] + 1] = {
+    sSplits[playerNum][newCount] = {
         key = key,
         orig = value,
         type = type,
@@ -363,7 +384,7 @@ local function speedrun_add_split(levelNum, type, playerNum)
         sLiveSplitSettings[playerNum] = { numberOfSplits = 0 }
         storage_save("numberOfPlayers", tostring(#sSplits))
     end
-    sLiveSplitSettings[playerNum].numberOfSplits = sLiveSplitSettings[playerNum].numberOfSplits + 1
+    sLiveSplitSettings[playerNum].numberOfSplits = newMapCount
     storage_save("numberOfSplits" .. tostring(playerNum), tostring(sLiveSplitSettings[playerNum].numberOfSplits))
     storage_save(key, value)
 
@@ -371,7 +392,7 @@ local function speedrun_add_split(levelNum, type, playerNum)
     network_send(true, {
         packetType = PACKET_TYPE_ADD_SPLIT,
         playerNum = playerNum,
-        splitNum = #sSplits[playerNum],
+        splitNum = newCount,
         type = type,
         levelNum = levelNum,
         pbSegment = -1,
@@ -1020,13 +1041,14 @@ local function split_menu_run_render(x, y, w, h, segmentW)
         local connected = np.connected
         local str = connected and get_uncolored_string(np.name) or "-"
         local segX = x + (segmentW * playerIndex)
-        local txtX = segX + 2
         local m = djui_hud_measure_text(str) * 0.3
-        if #sSplits == 2 and playerIndex == 1 then
-            txtX = x + (w - m) - 2
-        end
         if m > segmentW then
             str = str:sub(1, math_floor(((#str + 2 * 16) - (m - segmentW)) * 0.3)) .. ".."
+            m = djui_hud_measure_text(str) * 0.3
+        end
+        local txtX = segX + 2
+        if #sSplits == 2 and playerIndex == 1 then
+            txtX = x + (w - m) - 2
         end
         djui_hud_print_text(str, txtX, sMenuY, 0.3)
     end
@@ -1164,8 +1186,21 @@ local function split_menu_add_split_render(x, y, w, h)
             local playerNum = sSplitAddPlayer
             table.remove(sSplits[playerNum], sSplitEditSegmentNum)
             if #sSplits[playerNum] == 0 then table.remove(sSplits, playerNum) end
-            local key = get_split_key(translate_split(playerNum), sSplitEditSegmentNum)
+
+            local index = translate_split(playerNum, sSplitEditSegmentNum)
+
+            -- Remove the split from the splits map, and re-sort the map
+            local splitMap = sSplitsMap[playerNum]
+            splitMap[index] = -1
+            for i = index + 1, #splitMap do
+                if splitMap[i] ~= -1 then
+                    splitMap[i] = splitMap[i] - 1
+                end
+            end
+
+            local key = get_split_key(playerNum, index)
             storage_save(key, "cleared")
+
             network_send(true, {
                 packetType = PACKET_TYPE_EDIT_SPLIT,
                 playerNum = playerNum,
@@ -1203,7 +1238,7 @@ local function split_menu_add_split_render(x, y, w, h)
             sSplitEdit.levelName = get_abbreviated_level_name(levelNum)
 
             local playerNum = sSplitAddPlayer
-            local key = get_split_key(translate_split(playerNum), sSplitEditSegmentNum)
+            local key = get_split_key(playerNum, translate_split(playerNum, sSplitEditSegmentNum))
             local value = tostring(sSplitAddType) .. "_" .. tostring(levelNum) .. "_" .. tostring(-1)
             storage_save(key, value)
 
