@@ -32,12 +32,15 @@ smlua_audio_utils_replace_sequence(0x1F, 0x1A, 100, "1F_Seq_phantom_custom")
 smlua_audio_utils_replace_sequence(0x20, 0x23, 100, "20_Seq_phantom_custom")
 smlua_audio_utils_replace_sequence(0x21, 0x25, 100, "21_Seq_phantom_custom")
 
-movtexqc_register('castle_grounds_1_Movtex_0', 16, 1, 0)
-movtexqc_register("bob_1_Movtex_0", 9, 1, 0)
-movtexqc_register("wf_1_Movtex_1", 24, 1, 1)
-movtexqc_register("jrb_1_Movtex_0", 12, 1, 0)
-movtexqc_register("ccm_2_Movtex_0", 5, 2, 0)
-movtexqc_register("totwc_1_Movtex_0", 29, 1, 0)
+movtexqc_register('castle_grounds_1_Movtex_0', LEVEL_CASTLE_GROUNDS, 1, 0)
+movtexqc_register("bob_1_Movtex_0", LEVEL_BOB, 1, 0)
+movtexqc_register("wf_1_Movtex_1", LEVEL_WF, 1, 1)
+movtexqc_register("jrb_1_Movtex_0", LEVEL_JRB, 1, 0)
+movtexqc_register("ccm_2_Movtex_0", LEVEL_CCM, 2, 0)
+movtexqc_register("totwc_1_Movtex_0", LEVEL_TOTWC, 1, 0)
+movtexqc_register("bitdw_1_Movtex_2", LEVEL_BITDW, 1, 2)
+movtexqc_register("bowser_1_1_Movtex_2", LEVEL_BOWSER_1, 1, 2)
+movtexqc_register("pss_1_Movtex_1", LEVEL_PSS, 1, 1)
 
 gServerSettings.skipIntro = 1
 starPositions = gLevelValues.starPositions

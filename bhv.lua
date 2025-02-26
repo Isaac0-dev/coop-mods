@@ -20,3 +20,8 @@ function bhv_chilly_bully_loop(o)
         bhv_bully_loop()
     end
 end
+
+-- Fix hidden money bags models
+hook_behavior(id_bhvMoneybagHidden, OBJ_LIST_LEVEL, false, function (o)
+    obj_set_model_extended(o, E_MODEL_YELLOW_COIN)
+end, nil)
